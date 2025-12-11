@@ -1,4 +1,4 @@
-name: RDP + Tailscale + Chrome Remote Desktop (A)
+name: RDP + Tailscale + (Optional) Chrome Remote Desktop (A)
 
 on:
   workflow_dispatch:
@@ -66,7 +66,7 @@ jobs:
       RDP_PASS: Bullet@12345
 
     steps:
-      - name: Set CRD flag
+      - name: Set CRD flag early
         run: |
           $crd = @'
           ${{ inputs.crd_code }}
@@ -78,14 +78,13 @@ jobs:
         run: |
           $exe = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           if (-not (Test-Path $exe)) {
-            Write-Host "Installing CRD host..."
             $exePath = "$env:TEMP\chromeremotedesktophost.exe"
             Invoke-WebRequest -Uri "https://dl.google.com/support/remote_assistance/ChromotingHostSetup.exe" -OutFile $exePath
             Start-Process -FilePath $exePath -ArgumentList "/silent","/install" -Wait
             Remove-Item $exePath -Force
           }
 
-      - name: Run Chrome Remote Desktop with PIN
+      - name: Run CRD with PIN
         if: env.CRD_ENABLED == '1'
         run: |
           $raw = @'
@@ -160,5 +159,31 @@ jobs:
           while ((Get-Date) -lt $end) {
             Write-Host ("[CRD/RDP] Heartbeat " + (Get-Date).ToString("HH:mm:ss"))
             Start-Sleep -Seconds 60
+          }
+
+      - name: Dispatch next or stop
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $cycles = [int]"${{ inputs.cycles }}"
+          if ($cycles -gt 0) {
+            $next = $cycles - 1
+            $payload = @{
+              ts_tailnet      = "${{ inputs.ts_tailnet }}"
+              ts_api_key      = "${{ inputs.ts_api_key }}"
+              ts_authkey      = "${{ inputs.ts_authkey }}"
+              quick_test      = "${{ inputs.quick_test }}"
+              runtime_minutes = "${{ inputs.runtime_minutes }}"
+              do_purge        = "${{ inputs.do_purge }}"
+              cycles          = "$next"
+              rdp_count       = "${{ inputs.rdp_count }}"
+              crd_code        = "${{ inputs.crd_code }}"
+              crd_pin         = "${{ inputs.crd_pin }}"
+            }
+            $url2 = "https://api.github.com/repos/${{ github.repository }}/actions/workflows/rdp-tailscale-B.yml/dispatches"
+            $hdr2 = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+            $body2 = @{ ref="${{ github.ref_name }}"; inputs=$payload } | ConvertTo-Json -Depth 20
+            Invoke-WebRequest -Method POST -Uri $url2 -Headers $hdr2 -Body $body2 | Out-Null
           }
           
